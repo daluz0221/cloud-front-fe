@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, type ReactNode } from 'react';
 
 export type UserRole = 'ADMIN' | 'USER';
 
@@ -14,9 +14,32 @@ export interface User {
   groupCode?: string;
 }
 
+export type TaskStatus = 'pendiente' | 'en proceso' | 'terminada';
+
+export interface AppTask {
+  id: string;
+  name: string;
+  description: string;
+  dueDate: string;
+  assignedTo: string;
+  status: TaskStatus;
+  /** Valor de `estado` devuelto por el API (para PUT sin cambiar semántica del backend). */
+  backendEstado?: string;
+}
+
+/** Valor de `estado` para PUT: conserva el del backend si existe. */
+export function resolveBackendEstadoForTask(task: Pick<AppTask, 'status' | 'backendEstado'>): string {
+  if (task.backendEstado) return task.backendEstado;
+  if (task.status === 'en proceso') return 'EN PROCESO';
+  if (task.status === 'terminada') return 'TERMINADA';
+  return 'PENDIENTE';
+}
+
 const DEFAULT_GROUP_ID = 'default-group';
 const DEFAULT_GROUP_NAME = 'Grupo Familiar';
 const DEFAULT_GROUP_CODE = 'FAM001';
+const DEFAULT_LOGIN_GROUP_CODE = '56381f';
+const DEFAULT_TASKS_GROUP_ID = 5;
 
 interface DemoGroup {
   id: string;
@@ -62,12 +85,22 @@ interface AuthContextType {
   updateUser: (userData: Partial<User>) => void;
   joinGroup: (code: string) => Promise<{ success: boolean; error?: string; groupName?: string }>;
   createGroup: (name: string, code: string) => void;
+  createTask: (input: {
+    titulo: string;
+    descripcion: string;
+    fechaLimite: string;
+  }) => Promise<{ success: boolean; task?: AppTask; error?: string }>;
+  updateTask: (
+    tareaId: string,
+    input: { titulo: string; descripcion: string; fechaLimite: string; estado: string }
+  ) => Promise<{ success: boolean; task?: AppTask; error?: string }>;
+  groupTasks: AppTask[] | null;
   isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = 'https://cloud-back-fe.onrender.com/api';
 
 // ── MODO DEMO: usuarios registrados localmente (sin backend) ───────────────
 interface DemoUser {
@@ -111,8 +144,27 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+interface LoginResponse {
+  id: number | string;
+  nombreCompleto: string;
+  rol: UserRole;
+  redireccion?: string;
+  tieneGrupo?: boolean;
+}
+
+interface BackendTask {
+  id: number | string;
+  titulo: string;
+  descripcion: string;
+  fechaLimite: string;
+  estado: string;
+  miembroAsignado: string;
+  grupoId: number | string;
+}
+
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
+  const [groupTasks, setGroupTasks] = useState<AppTask[] | null>(null);
 
   // ─── Grupos en memoria (para createGroup / joinGroup que aún no tienen
   //     endpoint dedicado de "listar grupos") ──────────────────────────────
@@ -126,6 +178,159 @@ export function AuthProvider({ children }: AuthProviderProps) {
       ]));
     }
   );
+
+  const mapTaskStatus = (status?: string): TaskStatus => {
+    const normalized = (status || '').trim().toLowerCase();
+    if (normalized === 'en proceso') return 'en proceso';
+    if (normalized === 'terminada') return 'terminada';
+    return 'pendiente';
+  };
+
+  const normalizeDueDate = (raw: string | undefined): string => {
+    if (!raw) return '';
+    return String(raw).split('T')[0];
+  };
+
+  const mapBackendTask = (task: BackendTask): AppTask => ({
+    id: String(task.id),
+    name: task.titulo || '',
+    description: task.descripcion || '',
+    dueDate: normalizeDueDate(task.fechaLimite),
+    assignedTo: task.miembroAsignado || '',
+    status: mapTaskStatus(task.estado),
+    backendEstado: task.estado != null && task.estado !== '' ? String(task.estado) : undefined,
+  });
+
+  const mapBackendTasks = (payload: unknown): AppTask[] => {
+    const list: BackendTask[] = Array.isArray(payload)
+      ? (payload as BackendTask[])
+      : payload
+        ? [payload as BackendTask]
+        : [];
+
+    return list.map(mapBackendTask);
+  };
+
+  const parseBackendTaskResponse = (raw: unknown): AppTask | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    const t = raw as Partial<BackendTask> & { id?: number | string };
+    if (t.id == null) return null;
+    return mapBackendTask(t as BackendTask);
+  };
+
+  const resolveGrupoId = (u: User | null): number => {
+    const gid = u?.groupId;
+    if (gid != null && /^\d+$/.test(String(gid))) return Number(gid);
+    return DEFAULT_TASKS_GROUP_ID;
+  };
+
+  const createTask = async (input: {
+    titulo: string;
+    descripcion: string;
+    fechaLimite: string;
+  }): Promise<{ success: boolean; task?: AppTask; error?: string }> => {
+    if (!user || user.role !== 'ADMIN') {
+      return { success: false, error: 'Solo un administrador puede crear tareas' };
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/tareas`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-Usuario-Id': String(user.id),
+        },
+        body: JSON.stringify({
+          titulo: input.titulo,
+          descripcion: input.descripcion,
+          fechaLimite: input.fechaLimite,
+          grupoId: resolveGrupoId(user),
+        }),
+      });
+
+      if (!response.ok) {
+        let msg = 'No se pudo crear la tarea';
+        try {
+          const err = await response.json();
+          msg = err?.message || err?.error || msg;
+        } catch {
+          const text = await response.text();
+          if (text) msg = text;
+        }
+        return { success: false, error: msg };
+      }
+
+      const body = await response.json().catch(() => null);
+      let mapped = parseBackendTaskResponse(body);
+      if (!mapped) {
+        mapped = {
+          id: String(Date.now()),
+          name: input.titulo,
+          description: input.descripcion,
+          dueDate: normalizeDueDate(input.fechaLimite),
+          assignedTo: '',
+          status: 'pendiente',
+          backendEstado: resolveBackendEstadoForTask({ status: 'pendiente' }),
+        };
+      }
+      return { success: true, task: mapped };
+    } catch {
+      return { success: false, error: 'Error de red al crear la tarea' };
+    }
+  };
+
+  const updateTask = async (
+    tareaId: string,
+    input: { titulo: string; descripcion: string; fechaLimite: string; estado: string }
+  ): Promise<{ success: boolean; task?: AppTask; error?: string }> => {
+    if (!user || user.role !== 'ADMIN') {
+      return { success: false, error: 'Solo un administrador puede editar tareas' };
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/tareas/${encodeURIComponent(tareaId)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-Usuario-Id': String(user.id),
+        },
+        body: JSON.stringify({
+          titulo: input.titulo,
+          descripcion: input.descripcion,
+          estado: input.estado,
+          fechaLimite: input.fechaLimite,
+        }),
+      });
+
+      if (!response.ok) {
+        let msg = 'No se pudo actualizar la tarea';
+        try {
+          const err = await response.json();
+          msg = err?.message || err?.error || msg;
+        } catch {
+          const text = await response.text();
+          if (text) msg = text;
+        }
+        return { success: false, error: msg };
+      }
+
+      const body = await response.json().catch(() => null);
+      const mapped = parseBackendTaskResponse(body) || {
+        id: tareaId,
+        name: input.titulo,
+        description: input.descripcion,
+        dueDate: normalizeDueDate(input.fechaLimite),
+        assignedTo: '',
+        status: mapTaskStatus(input.estado),
+        backendEstado: input.estado,
+      };
+      return { success: true, task: mapped };
+    } catch {
+      return { success: false, error: 'Error de red al actualizar la tarea' };
+    }
+  };
 
   // ── LOGIN → intenta con backend, fallback a modo demo ──────────────────
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
@@ -143,17 +348,73 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (response.ok) {
         // SesionResponse: { id, nombreCompleto, rol, redireccion, tieneGrupo }
-        const sesion = await response.json();
+        const sesion = (await response.json()) as LoginResponse;
+
+        const rawRol = String(sesion.rol ?? '').toUpperCase();
+        const rolNormalizado: UserRole = rawRol === 'ADMIN' ? 'ADMIN' : 'USER';
 
         const parts: string[] = (sesion.nombreCompleto || '').split(' ');
+        const aliasPorDefecto =
+          (parts[0] || email.split('@')[0] || '').trim() || 'Usuario';
+        let groupData: Pick<User, 'groupId' | 'groupName' | 'groupCode'> = {
+          groupId: sesion.tieneGrupo ? 'has-group' : undefined,
+          groupName: undefined,
+          groupCode: undefined,
+        };
+
+        // 1) Si es USER, intentar ingreso automático al grupo por código fijo
+        if (rolNormalizado === 'USER') {
+          try {
+            const joinResponse = await fetch(`${API_BASE}/grupos/ingresar`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Usuario-Id': String(sesion.id),
+              },
+              body: JSON.stringify({ codigoAcceso: DEFAULT_LOGIN_GROUP_CODE }),
+            });
+
+            if (joinResponse.ok) {
+              const grupo = await joinResponse.json();
+              groupData = {
+                groupId: String(grupo.id),
+                groupName: grupo.nombre,
+                groupCode: grupo.codigoAcceso,
+              };
+            }
+          } catch {
+            // Si falla este endpoint, el login igual puede continuar
+          }
+        }
+
+        // 2) Consultar tareas del grupo requerido para mostrarlas en la app
+        try {
+          const tasksResponse = await fetch(`${API_BASE}/tareas/grupo/${DEFAULT_TASKS_GROUP_ID}`, {
+            method: 'GET',
+            headers: { Accept: 'application/json' },
+          });
+
+          if (tasksResponse.ok) {
+            const backendTasks = await tasksResponse.json();
+            setGroupTasks(mapBackendTasks(backendTasks));
+          } else {
+            setGroupTasks([]);
+          }
+        } catch {
+          setGroupTasks([]);
+        }
+
         const loggedUser: User = {
           id: String(sesion.id),
           name: parts[0] || '',
           lastName: parts.slice(1).join(' ') || '',
           email,
-          role: sesion.rol as UserRole,   // "ADMIN" | "USER"
-          alias: '',
-          groupId: sesion.tieneGrupo ? 'has-group' : undefined,
+          role: rolNormalizado,
+          // El backend no envía alias; la app solo exigía alias en el wizard de registro.
+          alias: aliasPorDefecto,
+          groupId: groupData.groupId,
+          groupName: groupData.groupName,
+          groupCode: groupData.groupCode,
         };
 
         setUser(loggedUser);
@@ -201,6 +462,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       groupName: updatedDemoUser.groupName,
       groupCode: updatedDemoUser.groupCode,
     };
+    setGroupTasks(null);
     setUser(loggedUser);
     return { success: true };
   };
@@ -212,6 +474,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   ): Promise<{ success: boolean; error?: string }> => {
     const { name, lastName, email, role, alias } = userData;
     const username = userData.username || email || '';
+    const normalizedRole = role === 'ADMIN' ? 'ADMIN' : role === 'USER' ? 'USER' : undefined;
 
     if (!name || !lastName || !email || !password) {
       return { success: false, error: 'Campos obligatorios' };
@@ -225,6 +488,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       };
     }
 
+    if (!normalizedRole) {
+      return { success: false, error: 'El rol debe ser USER o ADMIN' };
+    }
+
     // ── Intento con backend ───────────────────────────────────────────────
     try {
       const response = await fetch(`${API_BASE}/usuarios/registro`, {
@@ -236,7 +503,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           correo: email,
           username,
           contrasena: password,
-          rol: role || 'USER',   // "ADMIN" | "USER"
+          rol: normalizedRole,
         }),
       });
 
@@ -244,6 +511,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
         // ✅ Registro exitoso en backend → NO llama setUser, el usuario debe hacer login
         return { success: true };
       }
+
+      let backendError = 'No se pudo completar el registro';
+      try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const errPayload = await response.json();
+          backendError =
+            errPayload?.message ||
+            errPayload?.error ||
+            backendError;
+        } else {
+          const text = await response.text();
+          if (text) backendError = text;
+        }
+      } catch {
+        // Si no se puede parsear el error, conservar mensaje genérico
+      }
+
+      if (response.status === 409) {
+        return { success: false, error: 'El correo o username ya están registrados' };
+      }
+
+      return { success: false, error: backendError };
     } catch {
       // Backend no disponible, continuamos al fallback demo
     }
@@ -261,7 +551,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       lastName: lastName,
       email: email,
       password: password,
-      role: role || 'USER',
+      role: normalizedRole,
       alias: alias || '',
     };
 
@@ -280,6 +570,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const logout = () => {
     setUser(null);
+    setGroupTasks(null);
   };
 
   const updateUser = (userData: Partial<User>) => {
@@ -389,7 +680,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   return (
     <AuthContext.Provider
-      value={{
+        value={{
         user,
         login,
         register,
@@ -397,6 +688,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
         updateUser,
         joinGroup,
         createGroup,
+        createTask,
+        updateTask,
+        groupTasks,
         isAuthenticated: !!user,
       }}
     >

@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
-import { AuthProvider, useAuth, UserRole } from './context/AuthContext';
+import {
+  AppTask,
+  AuthProvider,
+  resolveBackendEstadoForTask,
+  useAuth,
+  UserRole,
+} from './context/AuthContext';
 import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { RoleSelectionScreen } from './screens/RoleSelectionScreen';
@@ -28,14 +34,7 @@ type Screen =
 
 type TaskStatus = 'pendiente' | 'en proceso' | 'terminada';
 
-interface Task {
-  id: string;
-  name: string;
-  description: string;
-  dueDate: string;
-  assignedTo: string;
-  status: TaskStatus;
-}
+type Task = AppTask;
 
 interface RegistrationData {
   name: string;
@@ -47,7 +46,16 @@ interface RegistrationData {
 }
 
 function AppContent() {
-  const { user, register, updateUser, createGroup, isAuthenticated } = useAuth();
+  const {
+    user,
+    register,
+    updateUser,
+    createGroup,
+    createTask,
+    updateTask,
+    groupTasks,
+    isAuthenticated,
+  } = useAuth();
   const [currentScreen, setCurrentScreen] = useState<Screen>('landing');
   const [tasks, setTasks] = useState<Task[]>([
     {
@@ -95,8 +103,15 @@ function AppContent() {
     }
   }, [isAuthenticated, user, currentScreen]);
 
+  useEffect(() => {
+    if (groupTasks !== null) {
+      setTasks(groupTasks);
+    }
+  }, [groupTasks]);
+
   const handleLoginSuccess = () => {
-    // La navegación la maneja el useEffect según el rol devuelto por el backend
+    // Evita que quede un registro a medias y el efecto mande a role/alias del wizard
+    setRegistrationData(null);
   };
 
   const handleRegisterContinue = (data: { name: string; lastName: string; email: string; password: string }) => {
@@ -147,15 +162,33 @@ function AppContent() {
   };
 
   const handleCreateTask = () => {
+    if (user?.role !== 'ADMIN') return;
     setCurrentScreen('createTask');
   };
 
-  const handleTaskCreated = (taskData: {
+  const handleTaskCreated = async (taskData: {
     name: string;
     description: string;
     dueDate: string;
     assignedTo: string;
-  }) => {
+  }): Promise<boolean> => {
+    if (user?.role === 'ADMIN') {
+      const result = await createTask({
+        titulo: taskData.name,
+        descripcion: taskData.description || '',
+        fechaLimite: taskData.dueDate,
+      });
+      if (result.success && result.task) {
+        setTasks((prev) => [...prev, result.task!]);
+        setCurrentScreen('taskList');
+        return true;
+      }
+      setToastMessage(result.error || 'No se pudo crear la tarea');
+      setToastType('error');
+      setShowToast(true);
+      return false;
+    }
+
     const newTask: Task = {
       id: Date.now().toString(),
       ...taskData,
@@ -163,6 +196,7 @@ function AppContent() {
     };
     setTasks([...tasks, newTask]);
     setCurrentScreen('taskList');
+    return true;
   };
 
   const handleTaskClick = (taskId: string) => {
@@ -182,12 +216,45 @@ function AppContent() {
     setCurrentScreen('editTask');
   };
 
-  const handleTaskUpdated = (taskId: string, updatedData: Partial<Task>) => {
+  const handleTaskUpdated = async (
+    taskId: string,
+    updatedData: Partial<Task>
+  ): Promise<boolean> => {
+    const existing = tasks.find((t) => t.id === taskId);
+    if (!existing) return false;
+
+    if (user?.role === 'ADMIN') {
+      const result = await updateTask(taskId, {
+        titulo: updatedData.name ?? existing.name,
+        descripcion: updatedData.description ?? existing.description,
+        fechaLimite: updatedData.dueDate ?? existing.dueDate,
+        estado: resolveBackendEstadoForTask(existing),
+      });
+      if (result.success && result.task) {
+        setTasks((prev) =>
+          prev.map((task) =>
+            task.id === taskId
+              ? {
+                  ...result.task!,
+                  assignedTo: result.task!.assignedTo || existing.assignedTo,
+                }
+              : task
+          )
+        );
+        return true;
+      }
+      setToastMessage(result.error || 'No se pudo actualizar la tarea');
+      setToastType('error');
+      setShowToast(true);
+      return false;
+    }
+
     setTasks(
       tasks.map((task) =>
         task.id === taskId ? { ...task, ...updatedData } : task
       )
     );
+    return true;
   };
 
   const handleStatusChange = (taskId: string, newStatus: TaskStatus) => {

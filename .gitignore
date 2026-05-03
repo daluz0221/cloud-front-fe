@@ -1,0 +1,50 @@
+# Dependencias
+node_modules/
+
+# Salida de build (Vite)
+dist/
+dist-ssr/
+*.local
+
+# Variables de entorno (no subir secretos)
+.env
+.env.*
+!.env.example
+
+# Logs y depuración
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Tests y cobertura
+coverage/
+.nyc_output/
+
+# Cachés y temporales
+.cache/
+.parcel-cache/
+.turbo/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+
+# Editor / IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# VS Code (opcional: quita las dos líneas siguientes si quieres versionar ajustes del equipo)
+.vscode/*
+!.vscode/extensions.json
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivos sueltos de certificados / claves locales
+*.pem
+*.key

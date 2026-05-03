@@ -11,7 +11,7 @@ interface CreateTaskScreenProps {
     description: string;
     dueDate: string;
     assignedTo: string;
-  }) => void;
+  }) => void | Promise<boolean>;
   existingTaskNames: string[];
   members: string[];
   groupName: string;
@@ -29,6 +29,7 @@ export function CreateTaskScreen({ onBack, onTaskCreated, existingTaskNames, mem
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
 
   const validateName = (name: string): string | null => {
     if (!name.trim()) return 'El nombre de la tarea es obligatorio';
@@ -54,7 +55,7 @@ export function CreateTaskScreen({ onBack, onTaskCreated, existingTaskNames, mem
     return null;
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const nameError = validateName(taskName);
     const descError = validateDescription(description);
     const dateError = validateDate(dueDate);
@@ -67,7 +68,21 @@ export function CreateTaskScreen({ onBack, onTaskCreated, existingTaskNames, mem
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) return;
 
-    onTaskCreated({ name: taskName, description, dueDate, assignedTo: '' });
+    setSaving(true);
+    setErrors((p) => ({ ...p, submit: '' }));
+    try {
+      const ok = await Promise.resolve(
+        onTaskCreated({ name: taskName, description, dueDate, assignedTo: '' })
+      );
+      if (ok === false) {
+        setErrors((p) => ({
+          ...p,
+          submit: 'No se pudo guardar la tarea. Revisa la conexión o los datos.',
+        }));
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const today = new Date().toISOString().split('T')[0];
@@ -149,12 +164,17 @@ export function CreateTaskScreen({ onBack, onTaskCreated, existingTaskNames, mem
             </select>
           </div>
 
+          {errors.submit && (
+            <p role="alert" className="text-red-600 text-sm">
+              {errors.submit}
+            </p>
+          )}
         </div>
       </main>
 
       <div className="px-6 pb-6">
-        <Button onClick={handleSubmit} aria-label="Crear nueva tarea">
-          Crear tarea
+        <Button onClick={handleSubmit} disabled={saving} aria-label="Crear nueva tarea">
+          {saving ? 'Guardando...' : 'Crear tarea'}
         </Button>
       </div>
     </div>

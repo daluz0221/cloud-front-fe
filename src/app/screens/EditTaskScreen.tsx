@@ -14,12 +14,13 @@ interface Task {
   dueDate: string;
   assignedTo: string;
   status: TaskStatus;
+  backendEstado?: string;
 }
 
 interface EditTaskScreenProps {
   task: Task;
   onBack: () => void;
-  onTaskUpdated: (taskId: string, updatedData: Partial<Task>) => void;
+  onTaskUpdated: (taskId: string, updatedData: Partial<Task>) => void | Promise<boolean>;
   existingTaskNames: string[];
   members: string[];
   groupName: string;
@@ -38,8 +39,9 @@ export function EditTaskScreen({ task, onBack, onTaskUpdated, existingTaskNames,
   const [dueDate, setDueDate] = useState(task?.dueDate || '');
   const [error, setError] = useState('');
   const [showToast, setShowToast] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setError('');
 
     if (!task?.id) {
@@ -62,12 +64,21 @@ export function EditTaskScreen({ task, onBack, onTaskUpdated, existingTaskNames,
       return;
     }
 
-    onTaskUpdated(task.id, { name, description, dueDate });
-    setShowToast(true);
-    setTimeout(() => {
-      setShowToast(false);
-      onBack();
-    }, 1500);
+    setSaving(true);
+    try {
+      const ok = await Promise.resolve(onTaskUpdated(task.id, { name, description, dueDate }));
+      if (ok === false) {
+        setError('No se pudo guardar en el servidor. Intenta de nuevo.');
+        return;
+      }
+      setShowToast(true);
+      setTimeout(() => {
+        setShowToast(false);
+        onBack();
+      }, 1500);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -143,10 +154,10 @@ export function EditTaskScreen({ task, onBack, onTaskUpdated, existingTaskNames,
       </main>
 
       <div className="px-6 pb-6 space-y-3">
-        <Button onClick={handleSave} aria-label="Guardar cambios de la tarea">
-          Guardar cambios
+        <Button onClick={handleSave} disabled={saving} aria-label="Guardar cambios de la tarea">
+          {saving ? 'Guardando...' : 'Guardar cambios'}
         </Button>
-        <Button onClick={onBack} variant="outline" aria-label="Cancelar edición">
+        <Button onClick={onBack} variant="outline" aria-label="Cancelar edición" disabled={saving}>
           Cancelar
         </Button>
       </div>
