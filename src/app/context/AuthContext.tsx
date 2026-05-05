@@ -174,7 +174,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // ─── Grupos en memoria (solo modo demo / fallback sin backend)
   const [groups, setGroups] = useState<Map<string, { name: string; code: string; adminId: string }>>(
     () => {
-      const storedGroups = ensureDefaultGroupExists();
+      ensureDefaultGroupExists();
       const allGroups = getDemoGroups();
       return new Map(allGroups.map((group) => [
         group.id,
@@ -426,10 +426,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
           groupName: groupData.groupName,
           groupCode: groupData.groupCode,
         };
-
+        
         setUser(loggedUser);
         return { success: true };
       }
+
+      let backendError = 'No se pudo iniciar sesión';
+      try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const errPayload = await response.json();
+          backendError = errPayload?.message || errPayload?.error || backendError;
+        } else {
+          const text = await response.text();
+          if (text) backendError = text;
+        }
+      } catch {
+        // Si no se puede parsear el error, conservar mensaje genérico
+      }
+
+      if (response.status === 401 || response.status === 404) {
+        return { success: false, error: 'Correo o contraseña incorrectos' };
+      }
+      return { success: false, error: backendError };
     } catch {
       // Backend no disponible, continuamos al fallback demo
     }
@@ -497,7 +516,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         error: 'La contraseña debe tener entre 6 y 10 caracteres (letras, números y símbolos: @, #, $, %, &, *)',
       };
     }
-
     if (!normalizedRole) {
       return { success: false, error: 'El rol debe ser USER o ADMIN' };
     }
@@ -626,6 +644,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
         return { success: true, groupName: grupo.nombre };
       }
+
+      let backendError = 'No se pudo unir al grupo';
+      try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const errPayload = await response.json();
+          backendError = errPayload?.message || errPayload?.error || backendError;
+        } else {
+          const text = await response.text();
+          if (text) backendError = text;
+        }
+      } catch {
+        // Si no se puede parsear el error, conservar mensaje genérico
+      }
+      return { success: false, error: backendError };
     } catch {
       // Backend no disponible, continuamos al fallback demo
     }
@@ -642,10 +675,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     // Unir al grupo demo
-    updateUser({ 
-      groupId: foundGroup.id, 
-      groupName: foundGroup.name, 
-      groupCode: foundGroup.code 
+    updateUser({
+      groupId: foundGroup.id,
+      groupName: foundGroup.name,
+      groupCode: foundGroup.code
     });
     return { success: true, groupName: foundGroup.name };
   };
@@ -657,6 +690,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   ): Promise<{ success: boolean; groupCode?: string; groupName?: string; error?: string }> => {
     if (!user) {
       return { success: false, error: 'No hay sesión activa' };
+    }
+    if (user.role !== 'ADMIN') {
+      return { success: false, error: 'Solo un administrador puede crear grupos' };
     }
 
     // ── Intento con backend ───────────────────────────────────────────────
@@ -684,6 +720,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
         return { success: true, groupCode: finalCode, groupName: nombreGrupo };
       }
+
+      let backendError = 'No se pudo crear el grupo';
+      try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const errPayload = await response.json();
+          backendError = errPayload?.message || errPayload?.error || backendError;
+        } else {
+          const text = await response.text();
+          if (text) backendError = text;
+        }
+      } catch {
+        // Si no se puede parsear el error, conservar mensaje genérico
+      }
+      return { success: false, error: backendError };
     } catch {
       // Backend no disponible, continuamos al fallback demo
     }

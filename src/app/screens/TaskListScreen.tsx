@@ -18,6 +18,7 @@ interface TaskListScreenProps {
   onCreateTask: () => void;
   onTaskClick: (taskId: string) => void;
   onEditTask?: (taskId: string) => void;
+  onLogout?: () => void;
   isAdmin?: boolean;
   userAlias?: string;
   userName?: string;
@@ -30,6 +31,7 @@ export function TaskListScreen({
   onCreateTask,
   onTaskClick,
   onEditTask,
+  onLogout,
   isAdmin,
   userAlias,
   userName,
@@ -43,6 +45,7 @@ export function TaskListScreen({
         userAlias={userAlias}
         userName={userName}
         isAdmin={isAdmin}
+        onLogout={onLogout}
       />
 
       <main className="flex-1 px-6 py-6 overflow-y-auto" aria-label="Lista de tareas">

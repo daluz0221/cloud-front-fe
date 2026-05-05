@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AppTask,
   AuthProvider,
@@ -6,6 +6,7 @@ import {
   useAuth,
   UserRole,
 } from './context/AuthContext';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from './components/ui/alert-dialog';
 import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { RoleSelectionScreen } from './screens/RoleSelectionScreen';
@@ -54,6 +55,7 @@ function AppContent() {
     updateTask,
     groupTasks,
     isAuthenticated,
+    logout
   } = useAuth();
   const [currentScreen, setCurrentScreen] = useState<Screen>('landing');
   const [tasks, setTasks] = useState<Task[]>([
@@ -153,6 +155,23 @@ function AppContent() {
 
   const handleJoinGroupSuccess = () => {
     setCurrentScreen('taskList');
+  };
+
+  const [showLogoutConfirmation, setShowLogoutConfirmation] = useState(false);
+
+  const handleLogoutRequest = () => {
+    setShowLogoutConfirmation(true);
+  };
+
+  const handleLogoutConfirm = () => {
+    logout();
+    setShowLogoutConfirmation(false);
+    setCurrentScreen('login');
+    setSelectedTaskId(null);
+  };
+
+  const handleLogoutCancel = () => {
+    setShowLogoutConfirmation(false);
   };
 
   const handleCreateTask = () => {
@@ -335,6 +354,7 @@ function AppContent() {
           isAdmin={isAdmin}
           userAlias={user?.alias}
           userName={userName}
+          onLogout={handleLogoutRequest}
         />
       )}
 
@@ -358,6 +378,7 @@ function AppContent() {
           onBack={handleBackToList}
           onStatusChange={handleStatusChange}
           onEdit={isAdmin ? () => handleEditTask(selectedTask.id) : undefined}
+          onLogout={handleLogoutRequest}
           isAdmin={isAdmin}
           groupName={user?.groupName || ''}
           groupCode={user?.groupCode || ''}
@@ -380,6 +401,21 @@ function AppContent() {
           isAdmin={isAdmin}
         />
       )}
+
+      <AlertDialog open={showLogoutConfirmation} onOpenChange={setShowLogoutConfirmation}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Estás seguro de cerrar sesión?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Si seleccionas "Sí", se cerrará tu sesión y regresarás al panel de login.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleLogoutCancel}>No</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLogoutConfirm}>Sí</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Toast
         message={toastMessage}

@@ -18,6 +18,7 @@ interface TaskDetailScreenProps {
   onBack: () => void;
   onStatusChange: (taskId: string, newStatus: TaskStatus) => void;
   onEdit?: () => void;
+  onLogout?: () => void;
   isAdmin?: boolean;
   groupName: string;
   groupCode: string;
@@ -36,7 +37,7 @@ const formatDate = (dateString: string): string => {
   });
 };
 
-export function TaskDetailScreen({ task, onBack, onEdit, isAdmin, groupName, groupCode, userAlias, userName }: TaskDetailScreenProps) {
+export function TaskDetailScreen({ task, onBack, onEdit, onLogout, isAdmin, groupName, groupCode, userAlias, userName }: TaskDetailScreenProps) {
   return (
     <div className="h-screen bg-white flex flex-col overflow-y-auto">
       <Header
@@ -48,6 +49,7 @@ export function TaskDetailScreen({ task, onBack, onEdit, isAdmin, groupName, gro
         isAdmin={isAdmin}
         showBack
         onBack={onBack}
+        onLogout={onLogout}
       />
 
       <main className="flex-1 px-6 py-6 space-y-5 overflow-y-auto" aria-label={`Detalle de la tarea: ${task.name}`}>
