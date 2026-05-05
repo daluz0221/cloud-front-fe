@@ -61,13 +61,13 @@ interface AuthContextType {
   logout: () => void;
   updateUser: (userData: Partial<User>) => void;
   joinGroup: (code: string) => Promise<{ success: boolean; error?: string; groupName?: string }>;
-  createGroup: (name: string, code: string) => void;
+  createGroup: (name: string, code: string) => Promise<void>;
   isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = 'https://cloud-back-fe.onrender.com/api';
 
 // ── MODO DEMO: usuarios registrados localmente (sin backend) ───────────────
 interface DemoUser {
@@ -134,29 +134,45 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     // ── Intento con backend ───────────────────────────────────────────────
+    console.log({ correo: email, contrasena: password });
     try {
       const response = await fetch(`${API_BASE}/usuarios/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ correo: email, contrasena: password }),
       });
-
+      const responseBody = await response.json();
+      console.log('Respuesta del backend al intentar login:', responseBody);
       if (response.ok) {
         // SesionResponse: { id, nombreCompleto, rol, redireccion, tieneGrupo }
-        const sesion = await response.json();
+        const sesion = responseBody;
 
         const parts: string[] = (sesion.nombreCompleto || '').split(' ');
+        
+        // Intentar recuperar alias del usuario guardado localmente
+        const savedDemoUser = findDemoUserByEmail(email);
+        const savedAlias = savedDemoUser?.alias || '';
+        
         const loggedUser: User = {
           id: String(sesion.id),
           name: parts[0] || '',
           lastName: parts.slice(1).join(' ') || '',
           email,
           role: sesion.rol as UserRole,   // "ADMIN" | "USER"
-          alias: '',
+          alias: savedAlias,
           groupId: sesion.tieneGrupo ? 'has-group' : undefined,
         };
+        
 
         setUser(loggedUser);
+        try {
+           await fetch(`${API_BASE}/grupos/ingresar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Usuario-Id': loggedUser.id },
+            body: JSON.stringify({ codigoAcceso: 'GRP-679550' }),
+          });
+        }
+        catch { console.log('No se pudo ingresar al grupo demo automáticamente, linea 167 AuthContext'); }
         return { success: true };
       }
     } catch {
@@ -211,7 +227,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     password: string
   ): Promise<{ success: boolean; error?: string }> => {
     const { name, lastName, email, role, alias } = userData;
-    const username = userData.username || email || '';
+    const username = userData.username || alias || '';
 
     if (!name || !lastName || !email || !password) {
       return { success: false, error: 'Campos obligatorios' };
@@ -224,6 +240,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         error: 'La contraseña debe tener entre 6 y 10 caracteres (letras, números y símbolos: @, #, $, %, &, *)',
       };
     }
+    console.log('Intentando registrar usuario:', { name, lastName, email, password, role, username });
+
 
     // ── Intento con backend ───────────────────────────────────────────────
     try {
@@ -242,7 +260,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (response.ok) {
         // ✅ Registro exitoso en backend → NO llama setUser, el usuario debe hacer login
-        return { success: true };
+        return { success: true, error: await response.json() };
       }
     } catch {
       // Backend no disponible, continuamos al fallback demo
@@ -336,10 +354,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     // Unir al grupo demo
-    updateUser({ 
-      groupId: foundGroup.id, 
-      groupName: foundGroup.name, 
-      groupCode: foundGroup.code 
+    updateUser({
+      groupId: foundGroup.id,
+      groupName: foundGroup.name,
+      groupCode: foundGroup.code
     });
     return { success: true, groupName: foundGroup.name };
   };
@@ -373,13 +391,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // ── Fallback: modo demo (sin backend) ─────────────────────────────────
     const groupId = Date.now().toString();
     const newGroup: DemoGroup = { id: groupId, name, code, adminId: user.id };
-    
+
     // Guardar en localStorage para que otros usuarios puedan unirse
     const storedGroups = localStorage.getItem('demo_groups');
     const nextGroups: DemoGroup[] = storedGroups ? JSON.parse(storedGroups) : [];
     nextGroups.push(newGroup);
     saveDemoGroups(nextGroups);
-    
+
     // También guardar en memoria
     const nextGroupMap = new Map(groups);
     nextGroupMap.set(groupId, { name, code, adminId: user.id });

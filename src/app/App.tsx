@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AuthProvider, useAuth, UserRole } from './context/AuthContext';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from './components/ui/alert-dialog';
 import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { RoleSelectionScreen } from './screens/RoleSelectionScreen';
@@ -47,7 +48,7 @@ interface RegistrationData {
 }
 
 function AppContent() {
-  const { user, register, updateUser, createGroup, isAuthenticated } = useAuth();
+  const { user, register, updateUser, createGroup, isAuthenticated, logout } = useAuth();
   const [currentScreen, setCurrentScreen] = useState<Screen>('landing');
   const [tasks, setTasks] = useState<Task[]>([
     {
@@ -78,8 +79,6 @@ function AppContent() {
       
       if (!user.role) {
         setCurrentScreen('roleSelection');
-      } else if (!user.alias) {
-        setCurrentScreen('alias');
       } else if (user.role === 'ADMIN' && !user.groupId) {
         setCurrentScreen('createGroup');
       } else if (user.role === 'USER' && !user.groupId) {
@@ -93,7 +92,7 @@ function AppContent() {
                && currentScreen !== 'landing') {
       setCurrentScreen('login');
     }
-  }, [isAuthenticated, user, currentScreen]);
+  }, [isAuthenticated, user]);
 
   const handleLoginSuccess = () => {
     // La navegación la maneja el useEffect según el rol devuelto por el backend
@@ -127,6 +126,7 @@ function AppContent() {
         setToastType('success');
         setShowToast(true);
         setCurrentScreen('login');
+        console.log('Usuario registrado con éxito:',  result.error );
       } else {
         setToastMessage(result.error || 'Error en el registro');
         setToastType('error');
@@ -137,13 +137,30 @@ function AppContent() {
     }
   };
 
-  const handleGroupCreated = (name: string, code: string) => {
-    createGroup(name, code);
+  const handleGroupCreated = async (name: string, code: string) => {
+    await createGroup(name, code);
     setCurrentScreen('taskList');
   };
 
   const handleJoinGroupSuccess = () => {
     setCurrentScreen('taskList');
+  };
+
+  const [showLogoutConfirmation, setShowLogoutConfirmation] = useState(false);
+
+  const handleLogoutRequest = () => {
+    setShowLogoutConfirmation(true);
+  };
+
+  const handleLogoutConfirm = () => {
+    logout();
+    setShowLogoutConfirmation(false);
+    setCurrentScreen('login');
+    setSelectedTaskId(null);
+  };
+
+  const handleLogoutCancel = () => {
+    setShowLogoutConfirmation(false);
   };
 
   const handleCreateTask = () => {
@@ -274,6 +291,7 @@ function AppContent() {
           isAdmin={isAdmin}
           userAlias={user?.alias}
           userName={userName}
+          onLogout={handleLogoutRequest}
         />
       )}
 
@@ -319,6 +337,21 @@ function AppContent() {
           isAdmin={isAdmin}
         />
       )}
+
+      <AlertDialog open={showLogoutConfirmation} onOpenChange={setShowLogoutConfirmation}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Estás seguro de cerrar sesión?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Si seleccionas "Sí", se cerrará tu sesión y regresarás al panel de login.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleLogoutCancel}>No</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLogoutConfirm}>Sí</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Toast
         message={toastMessage}
