@@ -3,19 +3,23 @@ import { Users } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { Modal } from '../components/Modal';
+import { useAuth } from '../context/AuthContext';
 
 interface CreateGroupScreenProps {
-  onGroupCreated: (groupName: string, groupCode: string) => void;
+  /** El grupo ya quedó creado en el servidor; solo navegar. */
+  onGroupCreated: () => void;
   onCancel: () => void;
   isAdmin: boolean;
 }
 
 export function CreateGroupScreen({ onGroupCreated, onCancel, isAdmin }: CreateGroupScreenProps) {
+  const { createGroup } = useAuth();
   const [groupName, setGroupName] = useState('');
   const [error, setError] = useState('');
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [generatedCode, setGeneratedCode] = useState('');
+  const [invitationCode, setInvitationCode] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const validateGroupName = (name: string): string | null => {
     if (name.length < 6 || name.length > 25) {
@@ -32,7 +36,7 @@ export function CreateGroupScreen({ onGroupCreated, onCancel, isAdmin }: CreateG
     return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!isAdmin) {
       setShowErrorModal(true);
       return;
@@ -42,9 +46,18 @@ export function CreateGroupScreen({ onGroupCreated, onCancel, isAdmin }: CreateG
       setError(validationError);
       return;
     }
-    const code = generateCode();
-    setGeneratedCode(code);
-    setShowSuccessModal(true);
+    setSubmitting(true);
+    setError('');
+    const fallbackCode = generateCode();
+    const result = await createGroup(groupName.trim(), fallbackCode);
+    setSubmitting(false);
+
+    if (result.success && result.groupCode) {
+      setInvitationCode(result.groupCode);
+      setShowSuccessModal(true);
+    } else {
+      setError(result.error || 'No se pudo crear el grupo. Intenta de nuevo.');
+    }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -98,7 +111,9 @@ export function CreateGroupScreen({ onGroupCreated, onCancel, isAdmin }: CreateG
         </div>
 
         <div className="mt-auto space-y-3">
-          <Button onClick={handleSubmit}>Crear grupo familiar</Button>
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting ? 'Creando grupo...' : 'Crear grupo familiar'}
+          </Button>
           {onCancel && (
             <Button variant="secondary" onClick={onCancel}>Cancelar</Button>
           )}
@@ -125,15 +140,22 @@ export function CreateGroupScreen({ onGroupCreated, onCancel, isAdmin }: CreateG
         <p className="text-[#757575] mb-2">Tu grupo fue creado exitosamente.</p>
         <div
           className="bg-[#E0F2F1] rounded-xl px-4 py-3 mb-3 text-center"
-          aria-label={`Código del grupo: ${generatedCode}`}
+          aria-label={`Código del grupo: ${invitationCode}`}
         >
           <p className="text-xs text-[#757575] mb-1">Código de invitación</p>
-          <p className="text-2xl font-mono font-bold text-[#00BFA5] tracking-widest">{generatedCode}</p>
+          <p className="text-xl sm:text-2xl font-mono font-bold text-[#00BFA5] tracking-wide break-all">
+            {invitationCode}
+          </p>
         </div>
         <p className="text-sm text-[#757575] mb-5">
           Comparte este código con los miembros de tu familia para que puedan unirse.
         </p>
-        <Button onClick={() => { setShowSuccessModal(false); onGroupCreated(groupName, generatedCode); }}>
+        <Button
+          onClick={() => {
+            setShowSuccessModal(false);
+            onGroupCreated();
+          }}
+        >
           Continuar
         </Button>
       </Modal>

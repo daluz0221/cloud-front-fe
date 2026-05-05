@@ -23,7 +23,7 @@ export function JoinGroupScreen({ onJoinSuccess }: JoinGroupScreenProps) {
     }
 
     setLoading(true);
-    const result = await joinGroup(code.trim().toUpperCase());
+    const result = await joinGroup(code.trim());
     setLoading(false);
 
     if (result.success) {
@@ -52,9 +52,9 @@ export function JoinGroupScreen({ onJoinSuccess }: JoinGroupScreenProps) {
             label="Código del grupo"
             placeholder="Ej: FAM123"
             value={code}
-            onChange={(e) => { setCode(e.target.value.toUpperCase()); setError(''); }}
+            onChange={(e) => { setCode(e.target.value); setError(''); }}
             error={error}
-            hint="El código tiene 6 caracteres en mayúsculas. Pídelo al jefe de hogar."
+            hint="Ingresa el código exacto que te compartió el jefe de hogar (mayúsculas y minúsculas importan)."
             required
           />
 

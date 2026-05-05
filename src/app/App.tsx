@@ -50,7 +50,6 @@ function AppContent() {
     user,
     register,
     updateUser,
-    createGroup,
     createTask,
     updateTask,
     groupTasks,
@@ -150,11 +149,6 @@ function AppContent() {
     } else if (user) {
       updateUser({ alias });
     }
-  };
-
-  const handleGroupCreated = (name: string, code: string) => {
-    createGroup(name, code);
-    setCurrentScreen('taskList');
   };
 
   const handleJoinGroupSuccess = () => {
@@ -324,7 +318,7 @@ function AppContent() {
 
       {currentScreen === 'createGroup' && (
         <CreateGroupScreen
-          onGroupCreated={handleGroupCreated}
+          onGroupCreated={() => setCurrentScreen('taskList')}
           onCancel={() => {}}
           isAdmin={isAdmin}
         />

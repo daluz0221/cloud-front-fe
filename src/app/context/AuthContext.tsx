@@ -38,8 +38,6 @@ export function resolveBackendEstadoForTask(task: Pick<AppTask, 'status' | 'back
 const DEFAULT_GROUP_ID = 'default-group';
 const DEFAULT_GROUP_NAME = 'Grupo Familiar';
 const DEFAULT_GROUP_CODE = 'FAM001';
-const DEFAULT_LOGIN_GROUP_CODE = '56381f';
-const DEFAULT_TASKS_GROUP_ID = 5;
 
 interface DemoGroup {
   id: string;
@@ -84,7 +82,10 @@ interface AuthContextType {
   logout: () => void;
   updateUser: (userData: Partial<User>) => void;
   joinGroup: (code: string) => Promise<{ success: boolean; error?: string; groupName?: string }>;
-  createGroup: (name: string, code: string) => void;
+  createGroup: (
+    name: string,
+    code: string
+  ) => Promise<{ success: boolean; groupCode?: string; groupName?: string; error?: string }>;
   createTask: (input: {
     titulo: string;
     descripcion: string;
@@ -144,12 +145,16 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+/** Coincide con `SesionResponse` del backend (login). */
 interface LoginResponse {
   id: number | string;
   nombreCompleto: string;
-  rol: UserRole;
+  rol: string;
   redireccion?: string;
-  tieneGrupo?: boolean;
+  /** `null` si el usuario aún no tiene grupo asignado. */
+  grupoId?: number | string | null;
+  grupo?: string;
+  codigoAcceso?: string | null;
 }
 
 interface BackendTask {
@@ -166,8 +171,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [groupTasks, setGroupTasks] = useState<AppTask[] | null>(null);
 
-  // ─── Grupos en memoria (para createGroup / joinGroup que aún no tienen
-  //     endpoint dedicado de "listar grupos") ──────────────────────────────
+  // ─── Grupos en memoria (solo modo demo / fallback sin backend)
   const [groups, setGroups] = useState<Map<string, { name: string; code: string; adminId: string }>>(
     () => {
       const storedGroups = ensureDefaultGroupExists();
@@ -218,10 +222,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return mapBackendTask(t as BackendTask);
   };
 
-  const resolveGrupoId = (u: User | null): number => {
+  const loadGroupTasksByGrupoId = async (grupoId: number) => {
+    try {
+      const tasksResponse = await fetch(`${API_BASE}/tareas/grupo/${grupoId}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+
+      if (tasksResponse.ok) {
+        const backendTasks = await tasksResponse.json();
+        setGroupTasks(mapBackendTasks(backendTasks));
+      } else {
+        setGroupTasks([]);
+      }
+    } catch {
+      setGroupTasks([]);
+    }
+  };
+
+  /** Id numérico de grupo del backend; si no hay grupo válido, `null`. */
+  const resolveGrupoId = (u: User | null): number | null => {
     const gid = u?.groupId;
     if (gid != null && /^\d+$/.test(String(gid))) return Number(gid);
-    return DEFAULT_TASKS_GROUP_ID;
+    return null;
   };
 
   const createTask = async (input: {
@@ -231,6 +254,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }): Promise<{ success: boolean; task?: AppTask; error?: string }> => {
     if (!user || user.role !== 'ADMIN') {
       return { success: false, error: 'Solo un administrador puede crear tareas' };
+    }
+
+    const grupoId = resolveGrupoId(user);
+    if (grupoId == null) {
+      return {
+        success: false,
+        error: 'Debes crear o unirte a un grupo familiar antes de crear tareas',
+      };
     }
 
     try {
@@ -245,7 +276,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           titulo: input.titulo,
           descripcion: input.descripcion,
           fechaLimite: input.fechaLimite,
-          grupoId: resolveGrupoId(user),
+          grupoId,
         }),
       });
 
@@ -347,7 +378,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       });
 
       if (response.ok) {
-        // SesionResponse: { id, nombreCompleto, rol, redireccion, tieneGrupo }
         const sesion = (await response.json()) as LoginResponse;
 
         const rawRol = String(sesion.rol ?? '').toUpperCase();
@@ -356,51 +386,31 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const parts: string[] = (sesion.nombreCompleto || '').split(' ');
         const aliasPorDefecto =
           (parts[0] || email.split('@')[0] || '').trim() || 'Usuario';
-        let groupData: Pick<User, 'groupId' | 'groupName' | 'groupCode'> = {
-          groupId: sesion.tieneGrupo ? 'has-group' : undefined,
-          groupName: undefined,
-          groupCode: undefined,
-        };
 
-        // 1) Si es USER, intentar ingreso automático al grupo por código fijo
-        if (rolNormalizado === 'USER') {
-          try {
-            const joinResponse = await fetch(`${API_BASE}/grupos/ingresar`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Usuario-Id': String(sesion.id),
-              },
-              body: JSON.stringify({ codigoAcceso: DEFAULT_LOGIN_GROUP_CODE }),
-            });
+        const rawGid = sesion.grupoId;
+        const gidNum =
+          typeof rawGid === 'number' && !Number.isNaN(rawGid)
+            ? rawGid
+            : typeof rawGid === 'string' && /^\d+$/.test(rawGid.trim())
+              ? Number(rawGid.trim())
+              : NaN;
+        const hasBackendGroup = !Number.isNaN(gidNum);
 
-            if (joinResponse.ok) {
-              const grupo = await joinResponse.json();
-              groupData = {
-                groupId: String(grupo.id),
-                groupName: grupo.nombre,
-                groupCode: grupo.codigoAcceso,
-              };
-            }
-          } catch {
-            // Si falla este endpoint, el login igual puede continuar
-          }
+        const grupoLabel = typeof sesion.grupo === 'string' ? sesion.grupo.trim() : '';
+        const isPlaceholderGrupo = grupoLabel === 'No pertenece a ningún grupo';
+
+        let groupData: Pick<User, 'groupId' | 'groupName' | 'groupCode'> = {};
+        if (hasBackendGroup) {
+          groupData = {
+            groupId: String(gidNum),
+            groupName: grupoLabel && !isPlaceholderGrupo ? grupoLabel : undefined,
+            groupCode: sesion.codigoAcceso ?? undefined,
+          };
         }
 
-        // 2) Consultar tareas del grupo requerido para mostrarlas en la app
-        try {
-          const tasksResponse = await fetch(`${API_BASE}/tareas/grupo/${DEFAULT_TASKS_GROUP_ID}`, {
-            method: 'GET',
-            headers: { Accept: 'application/json' },
-          });
-
-          if (tasksResponse.ok) {
-            const backendTasks = await tasksResponse.json();
-            setGroupTasks(mapBackendTasks(backendTasks));
-          } else {
-            setGroupTasks([]);
-          }
-        } catch {
+        if (hasBackendGroup) {
+          await loadGroupTasksByGrupoId(gidNum);
+        } else {
           setGroupTasks([]);
         }
 
@@ -610,6 +620,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
         // GrupoFamiliarResponse: { id, nombre, codigoAcceso, fechaCreacion }
         const grupo = await response.json();
         updateUser({ groupId: String(grupo.id), groupName: grupo.nombre, groupCode: grupo.codigoAcceso });
+        const gid = Number(grupo.id);
+        if (!Number.isNaN(gid)) {
+          await loadGroupTasksByGrupoId(gid);
+        }
         return { success: true, groupName: grupo.nombre };
       }
     } catch {
@@ -620,7 +634,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // Buscar grupo por código en localStorage
     const storedGroups = localStorage.getItem('demo_groups');
     const groups: Array<{ id: string; name: string; code: string }> = storedGroups ? JSON.parse(storedGroups) : [];
-    const foundGroup = groups.find(g => g.code === code);
+    const normalized = code.trim().toLowerCase();
+    const foundGroup = groups.find((g) => g.code.toLowerCase() === normalized);
 
     if (!foundGroup) {
       return { success: false, error: 'Código de grupo inválido o no existe' };
@@ -636,8 +651,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   // ── CREATE GROUP → intenta con backend, fallback a modo demo ────────────
-  const createGroup = async (name: string, code: string) => {
-    if (!user) return;
+  const createGroup = async (
+    name: string,
+    code: string
+  ): Promise<{ success: boolean; groupCode?: string; groupName?: string; error?: string }> => {
+    if (!user) {
+      return { success: false, error: 'No hay sesión activa' };
+    }
 
     // ── Intento con backend ───────────────────────────────────────────────
     try {
@@ -652,10 +672,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (response.ok) {
         const grupo = await response.json();
-        // Usar el código que devuelve el backend, o el generado localmente como fallback
-        const finalCode = grupo.codigoAcceso || code;
-        updateUser({ groupId: String(grupo.id), groupName: grupo.nombre, groupCode: finalCode });
-        return;
+        const finalCode =
+          typeof grupo.codigoAcceso === 'string' && grupo.codigoAcceso.length > 0
+            ? grupo.codigoAcceso
+            : code;
+        const nombreGrupo = typeof grupo.nombre === 'string' ? grupo.nombre : name;
+        updateUser({ groupId: String(grupo.id), groupName: nombreGrupo, groupCode: finalCode });
+        const gid = Number(grupo.id);
+        if (!Number.isNaN(gid)) {
+          await loadGroupTasksByGrupoId(gid);
+        }
+        return { success: true, groupCode: finalCode, groupName: nombreGrupo };
       }
     } catch {
       // Backend no disponible, continuamos al fallback demo
@@ -664,18 +691,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // ── Fallback: modo demo (sin backend) ─────────────────────────────────
     const groupId = Date.now().toString();
     const newGroup: DemoGroup = { id: groupId, name, code, adminId: user.id };
-    
+
     // Guardar en localStorage para que otros usuarios puedan unirse
     const storedGroups = localStorage.getItem('demo_groups');
     const nextGroups: DemoGroup[] = storedGroups ? JSON.parse(storedGroups) : [];
     nextGroups.push(newGroup);
     saveDemoGroups(nextGroups);
-    
+
     // También guardar en memoria
     const nextGroupMap = new Map(groups);
     nextGroupMap.set(groupId, { name, code, adminId: user.id });
     setGroups(nextGroupMap);
     updateUser({ groupId, groupName: name, groupCode: code });
+    return { success: true, groupCode: code, groupName: name };
   };
 
   return (
